@@ -1,0 +1,149 @@
+services:
+
+  n8n-server:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    networks:
+     appnet:
+    ports:
+      - "1120:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:1120/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_HEALTH_CHECK_ACTIVE=true
+      - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # Isolate n8n
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_TEMPLATES_ENABLED=false
+      - EXTERNAL_FRONTEND_HOOKS_URLS=
+      - N8N_DIAGNOSTICS_CONFIG_FRONTEND=
+      - N8N_DIAGNOSTICS_CONFIG_BACKEND=
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - EXECUTIONS_TIMEOUT=-1
+      - N8N_PAYLOAD_SIZE_MAX=100mb
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_BINARY_DATA_STORAGE_PATH=/home/node/.n8n/binaries:rw
+      - N8N_SECURE_COOKIE=false
+    links:
+    - postgres
+    - redis
+    volumes:
+      - n8n_storage:/home/node/.n8n
+      - ./files:/files
+      - ./config/proxy/ssl/ca:/opt/custom-certificates
+      - n8n_binaries:/home/node/.n8n/binaries
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_NON_ROOT_USER
+      - POSTGRES_NON_ROOT_PASSWORD
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./config/postgres/init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+    networks:
+     appnet:
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:6-alpine
+    restart: always
+    volumes:
+      - redis_storage:/data
+    networks:
+     appnet:
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n-worker:
+    restart: always
+    image: docker.n8n.io/n8nio/n8n
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_HEALTH_CHECK_ACTIVE=true
+      - N8N_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # Isolate n8n
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_TEMPLATES_ENABLED=false
+      - EXTERNAL_FRONTEND_HOOKS_URLS=
+      - N8N_DIAGNOSTICS_CONFIG_FRONTEND=
+      - N8N_DIAGNOSTICS_CONFIG_BACKEND=
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - EXECUTIONS_TIMEOUT=-1
+      - N8N_PAYLOAD_SIZE_MAX=100mb
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_BINARY_DATA_STORAGE_PATH=/home/node/.n8n/binaries:rw
+      - N8N_SECURE_COOKIE=false
+    links:
+      - postgres
+      - redis
+    volumes:
+      - n8n_storage:/home/node/.n8n
+      - n8n_binaries:/home/node/.n8n/binaries
+    command: worker
+    networks:
+     appnet:
+    depends_on:
+      - n8n-server
+
+  web:
+    image: nginx
+    container_name: ftp
+    restart: always
+    volumes:
+      - ./config/ftp/files:/usr/share/nginx/html:ro
+      - ./config/ftp/default.conf:/etc/nginx/conf.d/default.conf:ro  # Custom Nginx config
+    networks:
+      appnet:
+    ports:
+      - "1122:80"
+
+
+volumes:
+  db_storage:
+  n8n_storage:
+  redis_storage:
+  n8n_binaries:
+
+networks:
+  appnet:
+    driver: bridge
+    name: appnet
